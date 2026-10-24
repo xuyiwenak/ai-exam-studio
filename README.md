@@ -2,7 +2,11 @@
 
 [![Cross-platform tests](https://github.com/xuyiwenak/ai-exam-studio/actions/workflows/compatibility.yml/badge.svg)](https://github.com/xuyiwenak/ai-exam-studio/actions/workflows/compatibility.yml)
 
-一个在自己电脑上运行的模拟考试系统。用 AI 从 Excel、Word、PDF 中整理题目，人工核对后加入题库，再进行限时练习和逐题复盘。
+[English](README.en.md) · 简体中文
+
+**本地模拟考试系统 + AI 题库导入工具。**把 Excel、Word、PDF 中已有的题目整理成可编辑的题库，人工核对答案后进行限时模拟考试、刷题和错题复盘。扫描版 PDF 可交给支持图片输入的多模态模型识别。
+
+**AI Exam Studio** is a local-first mock exam and question bank web app. Import existing questions from Excel (`.xlsx`), Word (`.docx`) or PDF (`.pdf`) with your own OpenAI-compatible LLM API; review answers, then take timed practice tests. Scanned PDFs require a vision-capable model. [Read the English guide](README.en.md).
 
 **无需注册账号或部署数据库。**公开仓库内置 5 道演示题；个人题库和 API Key 不随代码公开。已有题库可以离线练习，首次安装依赖和调用远程 AI 时需要联网。
 
@@ -16,14 +20,20 @@
 
 简答题会保存作答，但不自动评分；没有可用答案的客观题不会参与随机抽题和自动评分。及格线仅供自测，并非官方考试规则。
 
+## 适用场景
+
+- 手里有 Excel、Word 或 PDF 格式的考试题库，想导入网页反复练习，而不是逐题手工录入。
+- 想在自己的电脑上搭建可设置题量、时间和及格线的模拟考试与刷题系统。
+- 需要用自选大模型处理扫描版 PDF，同时在保存前人工检查识别结果和标准答案。
+
 ## 系统兼容性
 
-| 环境 | 运行方式 | 验证情况 |
-| --- | --- | --- |
-| macOS（Apple Silicon） | `start.command` 后台启动，或按下文手动运行 
-| macOS（Intel） | 与 Apple Silicon 相同 
-| Windows 10/11 | PowerShell 中手动运行 Python 服务 
-| Linux（常见 glibc 发行版） | 终端中手动运行 Python 服务 
+| 环境 | 运行方式 |
+| --- | --- |
+| macOS（Apple Silicon） | `start.command` 后台启动，或按下文手动运行 |
+| macOS（Intel） | 与 Apple Silicon 相同 |
+| Windows 10/11 | PowerShell 中手动运行 Python 服务 |
+| Linux（常见 glibc 发行版） | 终端中手动运行 Python 服务 |
 
 需要 **Python 3.11 或更新版本**和现代浏览器。Chrome 已实测；近期版本的 Edge、Firefox、Safari 可尝试使用，但尚未逐一验证。普通使用不需要 Node.js、npm 或 Docker。
 
@@ -105,6 +115,7 @@ Windows 和 Linux 的手动启动方式需要保持终端打开；按 `Ctrl+C` �
 | AI 配置与 API Key | `.local/ai-config.json`；请保护此文件和项目目录的访问权限 |
 | 未交卷试卷、最近 30 次考试记录 | 当前浏览器的本地存储 |
 | 公开演示题 | `questions.js` |
+
 ## 常见问题
 
 - **网页打不开**：确认本地服务正在运行，并检查终端输出；macOS 后台运行时可查看 `.local/server.log`。
