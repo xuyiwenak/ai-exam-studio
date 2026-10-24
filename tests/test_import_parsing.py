@@ -49,6 +49,17 @@ class ImportParsingTests(unittest.TestCase):
             with self.assertRaisesRegex(server.UserError, "截断"):
                 server.completion(config, [{"role": "user", "content": "example"}], json_mode=True)
 
+    def test_official_deepseek_has_larger_output_budget(self):
+        response = FakeResponse({"choices": [{"message": {"content": '{"questions":[]}'}, "finish_reason": "stop"}]})
+        for base_url, expected in [
+            ("https://api.deepseek.com", server.DEEPSEEK_OUTPUT_TOKENS),
+            ("http://127.0.0.1:9000", server.DEFAULT_OUTPUT_TOKENS),
+        ]:
+            with self.subTest(base_url=base_url), patch.object(server.urllib.request, "urlopen", return_value=response) as send:
+                server.completion({"base_url": base_url, "model": "example", "api_key": "test"}, [{"role": "user", "content": "example"}])
+                payload = json.loads(send.call_args.args[0].data)
+                self.assertEqual(payload["max_tokens"], expected)
+
     def test_empty_model_reply_is_retried_once(self):
         valid = json.dumps({"questions": [{"type": "single", "text": "测试题", "options": ["错", "对"], "answer": [1], "explanation": ""}]})
         config = {"model": "example", "api_key": "test"}

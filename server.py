@@ -41,6 +41,8 @@ MAX_UPLOAD = 20 * 1024 * 1024
 MAX_EXTRACTED_CHARS = 220_000
 MAX_TEXT_CHUNKS = 50
 MAX_PARALLEL_REQUESTS = 3
+DEFAULT_OUTPUT_TOKENS = 8192
+DEEPSEEK_OUTPUT_TOKENS = 32768
 MAX_QUESTIONS = 1000
 MAX_VISION_PAGES = 40
 
@@ -240,7 +242,8 @@ answer: 0 起始的正确选项下标数组，未知时 []；explanation: 原资
 def completion(config: dict, messages: list[dict], json_mode: bool = False) -> str:
     base = validate_base_url(config.get("base_url", ""))
     endpoint = base + "/chat/completions"
-    payload = {"model": config["model"], "messages": messages, "max_tokens": 8192}
+    official_deepseek = urllib.parse.urlparse(base).hostname == "api.deepseek.com"
+    payload = {"model": config["model"], "messages": messages, "max_tokens": DEEPSEEK_OUTPUT_TOKENS if official_deepseek else DEFAULT_OUTPUT_TOKENS}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     request = urllib.request.Request(
