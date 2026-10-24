@@ -15,7 +15,7 @@
   let timerHandle;
   let backendAvailable = false;
   let aiConfig = {base_url: 'https://api.openai.com/v1', model: '', has_key: false, masked_key: ''};
-  let importState = {file: null, title: '', questions: [], warnings: [], summary: null, source: '', busy: false, error: '', page: 0, editingIndex: null, editingDraft: null};
+  let importState = {file: null, title: '', questions: [], warnings: [], summary: null, source: '', busy: false, progress: null, error: '', page: 0, editingIndex: null, editingDraft: null};
   let fileDragDepth = 0;
 
   async function requestJSON(path, options = {}) {
@@ -158,7 +158,7 @@
     const invalid = state.questions.filter(q => q.invalid).length;
     APP.innerHTML = `<section class="page-intro"><div><div class="eyebrow">IMPORT QUESTION BANK</div><h1>导入题库</h1><p>上传文件 → AI 识别题目 → 人工核对 → 保存为可考试的题库。</p></div><button class="secondary" type="button" data-action="nav-library">返回题库</button></section><div class="wide-layout"><section class="panel content-panel"><h2>选择题库文件</h2><p>支持 .xlsx、.docx 和 .pdf（含扫描版）。可提取文字或扫描页图片会发送给配置的模型。</p>${!backendAvailable ? '<div class="inline-note danger-note">导入服务未运行。请双击 start.command 启动本地服务。</div>' : ''}${!aiConfig.has_key ? '<div class="inline-note warning-note">尚未配置 API Key。请先到 AI 配置页面填写接口信息；扫描版 PDF 还需要支持图片输入的模型。</div>' : ''}
       <label class="file-picker ${state.busy ? 'is-disabled' : ''}" for="importFile"><input id="importFile" type="file" accept=".xlsx,.docx,.pdf" ${state.busy ? 'disabled' : ''}><span class="file-picker-icon">↑</span><strong>${state.file ? esc(state.file.name) : '拖入文件，或点击选择 Excel、Word、PDF'}</strong><span>${state.file ? `${(state.file.size / 1024).toFixed(1)} KB · 拖入或点击可重新选择` : '单个文件不超过 20 MB'}</span></label>
-      <div class="toolbar-row"><button class="primary" type="button" data-action="analyze-file" ${!state.file || state.busy || !backendAvailable || !aiConfig.has_key ? 'disabled' : ''}>${state.busy ? '正在分析…' : '用 AI 分析题目'}</button>${state.busy ? '<span class="busy"><i class="spinner"></i>正在解析文件并调用模型，题量多时可能需要几分钟</span>' : ''}</div>${state.error ? `<div class="inline-note danger-note">${esc(state.error)}</div>` : ''}
+      <div class="toolbar-row"><button class="primary" type="button" data-action="analyze-file" ${!state.file || state.busy || !backendAvailable || !aiConfig.has_key ? 'disabled' : ''}>${state.busy ? '正在分析…' : '用 AI 分析题目'}</button>${state.busy ? '<span class="busy"><i class="spinner"></i>正在解析文件并调用模型，题量多时可能需要几分钟</span>' : ''}</div>${state.busy ? `<div class="import-progress" role="status" aria-live="polite"><div class="import-progress-label"><span>${state.progress?.total ? `已完成 ${state.progress.completed} / ${state.progress.total} 批` : '正在读取文件并准备分批…'}</span><strong>${state.progress?.total ? `${Math.round(state.progress.completed / state.progress.total * 100)}%` : '0%'}</strong></div><div class="progress-track"><div class="progress-fill" style="width:${state.progress?.total ? state.progress.completed / state.progress.total * 100 : 0}%"></div></div></div>` : ''}${state.error ? `<div class="inline-note danger-note">${esc(state.error)}</div>` : ''}
       ${state.questions.length ? `<hr class="rule"><div class="preview-head"><div><strong>识别结果 · ${state.questions.length} 道题</strong><p>${invalid ? `${invalid} 道需要核对答案或选项。` : '全部题目均有可用答案或为简答题。'}请核对模型识别结果后再保存。${state.summary?.vision_pages ? `其中 ${state.summary.vision_pages} 页由多模态模型读取图片。` : ''}</p></div><span class="source-badge">${esc(state.source)}</span></div>${state.warnings.map(warning => `<div class="inline-note warning-note">${esc(warning)}</div>`).join('')}<div class="form-field"><label for="importTitle">题库名称</label><input id="importTitle" type="text" value="${esc(state.title)}" maxlength="100"></div>${state.editingDraft ? renderEditor() : ''}<div class="preview-list">${visible.map((q, localIndex) => {
         const index = state.page * 15 + localIndex;
         return `<div class="preview-item"><div class="preview-item-top"><span class="index">${String(index + 1).padStart(2, '0')}</span><span class="question">${esc(q.text)}</span><span class="status ${q.invalid ? 'wrong' : 'correct'}">${q.invalid ? '待核对' : TYPE_LABELS[q.type]}</span></div><div class="option-preview">${q.options.map((option, i) => `${LETTERS[i]}. ${esc(option)}`).join('　')}<br>答案：${q.type === 'essay' ? '简答待自评' : q.answer.length ? q.answer.map(i => LETTERS[i]).join('、') : '缺失'}</div><div class="preview-actions"><button type="button" data-action="edit-question" data-value="${index}">编辑</button><button type="button" class="remove" data-action="remove-question" data-value="${index}">移除</button></div></div>`;
@@ -316,13 +316,49 @@
     try { aiConfig = await requestJSON('/api/config/clear', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); render(); toast('AI 配置已清除'); }
     catch (error) { toast(error.message); }
   }
+  async function requestPreviewStream(file) {
+    const response = await fetch(`/api/preview-stream?filename=${encodeURIComponent(file.name)}`, {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: file});
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `请求失败（${response.status}）`);
+    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('当前浏览器无法读取导入进度。');
+    const decoder = new TextDecoder();
+    let pending = '';
+    let result = null;
+    function handleLine(line) {
+      if (!line.trim()) return;
+      let event;
+      try { event = JSON.parse(line); } catch (_) { throw new Error('导入进度响应格式错误。'); }
+      if (event.type === 'error') throw new Error(event.error || '题库分析失败。');
+      if (event.type === 'progress') {
+        importState.progress = {completed: event.completed, total: event.total};
+        if (screen === 'import') renderImport();
+      }
+      if (event.type === 'result') result = event;
+    }
+    while (true) {
+      const {value, done} = await reader.read();
+      pending += decoder.decode(value || new Uint8Array(), {stream: !done});
+      let newline;
+      while ((newline = pending.indexOf('\n')) !== -1) {
+        handleLine(pending.slice(0, newline));
+        pending = pending.slice(newline + 1);
+      }
+      if (done) break;
+    }
+    handleLine(pending);
+    if (!result) throw new Error('导入请求中断，请重试。');
+    return result;
+  }
   async function analyzeFile() {
     const file = importState.file;
     if (!file) return toast('请先选择文件');
     if (file.size > 20 * 1024 * 1024) return toast('文件不能超过 20 MB');
-    importState.busy = true; importState.error = ''; importState.questions = []; renderImport();
+    importState.busy = true; importState.progress = {completed: 0, total: 0}; importState.error = ''; importState.questions = []; renderImport();
     try {
-      const data = await requestJSON(`/api/preview?filename=${encodeURIComponent(file.name)}`, {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: file});
+      const data = await requestPreviewStream(file);
       importState.questions = data.questions;
       importState.warnings = data.warnings || [];
       importState.summary = data.summary;
@@ -333,7 +369,7 @@
       importState.editingDraft = null;
       toast(`识别出 ${data.questions.length} 道题，请核对后导入`);
     } catch (error) { importState.error = error.message; }
-    finally { importState.busy = false; renderImport(); }
+    finally { importState.busy = false; importState.progress = null; if (screen === 'import') renderImport(); }
   }
   function selectImportFile(files) {
     if (importState.busy || !files?.length) return;
@@ -341,7 +377,7 @@
     const error = files.length > 1 ? '一次只能导入一个文件。' : !/\.(xlsx|docx|pdf)$/i.test(file.name) ? '仅支持 .xlsx、.docx 和 .pdf 文件。' : file.size > 20 * 1024 * 1024 ? '文件不能超过 20 MB。' : file.size === 0 ? '文件为空，请选择其他文件。' : '';
     importState.file = error ? null : file;
     importState.questions = []; importState.warnings = []; importState.summary = null;
-    importState.source = ''; importState.title = ''; importState.error = error;
+    importState.source = ''; importState.title = ''; importState.error = error; importState.progress = null;
     importState.page = 0; importState.editingIndex = null; importState.editingDraft = null;
     renderImport();
   }
@@ -357,7 +393,7 @@
     try {
       const data = await requestJSON('/api/banks', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: importState.title, source: importState.source, questions: importState.questions})});
       BANKS[data.bank.id] = data.bank;
-      importState = {file: null, title: '', questions: [], warnings: [], summary: null, source: '', busy: false, error: '', page: 0, editingIndex: null, editingDraft: null};
+      importState = {file: null, title: '', questions: [], warnings: [], summary: null, source: '', busy: false, progress: null, error: '', page: 0, editingIndex: null, editingDraft: null};
       showScreen('library'); toast(`已导入 ${data.bank.questions.length} 道题`);
     } catch (error) { importState.error = error.message; importState.busy = false; renderImport(); }
   }

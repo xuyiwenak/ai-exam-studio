@@ -13,6 +13,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,11 +39,17 @@ STATIC = {
 }
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_EXTRACTED_CHARS = 220_000
+MAX_TEXT_CHUNKS = 50
+MAX_PARALLEL_REQUESTS = 3
 MAX_QUESTIONS = 1000
 MAX_VISION_PAGES = 40
 
 
 class UserError(Exception):
+    pass
+
+
+class EmptyModelOutput(UserError):
     pass
 
 
@@ -106,24 +114,27 @@ def save_config(payload: dict) -> dict:
     return public_config()
 
 
-def split_units(units: list[str], prefix: str = "") -> list[str]:
+def split_units(units: list[str], prefix: str = "", max_units: int | None = None) -> list[str]:
     chunks: list[str] = []
     current = prefix
+    unit_count = 0
     for unit in units:
         if len(unit) > 12_000:
             pieces = [unit[i:i + 10_000] for i in range(0, len(unit), 10_000)]
         else:
             pieces = [unit]
         for piece in pieces:
-            if len(current) + len(piece) > 12_000 and current.strip() != prefix.strip():
+            if (len(current) + len(piece) > 12_000 or (max_units and unit_count >= max_units)) and current.strip() != prefix.strip():
                 chunks.append(current)
                 current = prefix
+                unit_count = 0
             current += piece + "\n"
+            unit_count += 1
     if current.strip() != prefix.strip():
         chunks.append(current)
     if not chunks:
         raise UserError("文件中没有可提取的文字。")
-    if sum(map(len, chunks)) > MAX_EXTRACTED_CHARS or len(chunks) > 25:
+    if sum(map(len, chunks)) > MAX_EXTRACTED_CHARS or len(chunks) > MAX_TEXT_CHUNKS:
         raise UserError("题库内容过大，请拆成较小文件后导入。")
     return chunks
 
@@ -149,7 +160,7 @@ def extract_xlsx(data: bytes) -> tuple[list[str], dict]:
     if not units:
         raise UserError("Excel 没有可读取的题目内容。")
     prefix = "以下是 Excel 单元格。请按列含义识别题目和答案。\n" + "\n".join(headers) + "\n"
-    return split_units(units, prefix), {"rows": row_count, "sheets": len(workbook.sheetnames)}
+    return split_units(units, prefix, max_units=25), {"rows": row_count, "sheets": len(workbook.sheetnames)}
 
 
 def extract_docx(data: bytes) -> tuple[list[str], dict]:
@@ -165,7 +176,7 @@ def extract_docx(data: bytes) -> tuple[list[str], dict]:
             units.append(block.text.strip())
     if not units:
         raise UserError("Word 文件中没有可读取的文字。")
-    return split_units(units), {"paragraphs_and_rows": len(units)}
+    return split_units(units, max_units=25), {"paragraphs_and_rows": len(units)}
 
 
 def extract_pdf(data: bytes) -> tuple[list[str], dict, list[tuple[int, str]]]:
@@ -242,9 +253,14 @@ def completion(config: dict, messages: list[dict], json_mode: bool = False) -> s
         with urllib.request.urlopen(request, timeout=150) as response:
             raw = response.read(6 * 1024 * 1024)
         body = json.loads(raw)
-        content = body["choices"][0]["message"]["content"]
+        choice = body["choices"][0]
+        content = choice["message"]["content"]
         if isinstance(content, list):
             content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        if choice.get("finish_reason") == "length":
+            raise UserError("模型输出达到长度上限，JSON 被截断。请将题库拆成较小文件后重试。")
+        if not content or not str(content).strip():
+            raise EmptyModelOutput("模型返回了空内容。")
         return str(content)
     except urllib.error.HTTPError as exc:
         detail = exc.read(2000).decode("utf-8", "replace")
@@ -331,7 +347,7 @@ def normalize_question(raw: dict) -> dict | None:
     }
 
 
-def parse_with_ai(filename: str, chunks: list[str], config: dict, image_pages: list[tuple[int, str]] | None = None) -> tuple[list[dict], list[str]]:
+def parse_with_ai(filename: str, chunks: list[str], config: dict, image_pages: list[tuple[int, str]] | None = None, progress: Callable[[int, int], None] | None = None) -> tuple[list[dict], list[str]]:
     if not config.get("api_key") or not config.get("model"):
         raise UserError("请先在 AI 配置中填写 API Key 和模型 ID。")
     questions = []
@@ -340,7 +356,13 @@ def parse_with_ai(filename: str, chunks: list[str], config: dict, image_pages: l
     image_pages = image_pages or []
     jobs = [(f"文字片段 {index}/{len(chunks)}", chunk) for index, chunk in enumerate(chunks, start=1)]
     jobs.extend((f"PDF 第 {page} 页图片", image) for page, image in image_pages)
-    for label, content in jobs:
+    if not jobs:
+        raise UserError("文件中没有可提取的题目内容。")
+    if progress:
+        progress(0, len(jobs))
+
+    def process_job(job: tuple[str, str]) -> tuple[list[dict], list[str]]:
+        label, content = job
         user_content = (
             [{"type": "text", "text": f"文件名：{filename}\n{label}。请读取这页图片中实际可见的题目和答案；无法辨认或原文没有答案时不要猜测。"},
              {"type": "image_url", "image_url": {"url": "data:image/png;base64," + content, "detail": "high"}}]
@@ -351,16 +373,49 @@ def parse_with_ai(filename: str, chunks: list[str], config: dict, image_pages: l
             {"role": "user", "content": user_content},
         ]
         try:
-            output = parse_json_output(completion(config, messages, json_mode=True))
+            for attempt in range(2):
+                try:
+                    output = parse_json_output(completion(config, messages, json_mode=True))
+                    break
+                except EmptyModelOutput as exc:
+                    if attempt:
+                        raise UserError("模型连续两次返回空内容，请稍后重试或更换模型。") from exc
         except UserError as exc:
             if label.startswith("PDF"):
                 raise UserError(f"{label}识别失败，请确认所选模型支持图片输入：{exc}") from exc
-            raise
+            raise UserError(f"{label}识别失败：{exc}") from exc
+        batch_questions = []
+        batch_warnings = []
         for raw in output["questions"]:
             question = normalize_question(raw)
             if question is None:
-                warnings.append(f"{label}有无法识别的题目，已跳过。")
+                batch_warnings.append(f"{label}有无法识别的题目，已跳过。")
                 continue
+            batch_questions.append(question)
+        return batch_questions, batch_warnings
+
+    results = [None] * len(jobs)
+    with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_REQUESTS, len(jobs))) as executor:
+        pending = {}
+        next_job = 0
+        for _ in range(min(MAX_PARALLEL_REQUESTS, len(jobs))):
+            pending[executor.submit(process_job, jobs[next_job])] = next_job
+            next_job += 1
+        completed = 0
+        while pending:
+            future = next(as_completed(pending))
+            index = pending.pop(future)
+            results[index] = future.result()
+            completed += 1
+            if progress:
+                progress(completed, len(jobs))
+            if next_job < len(jobs):
+                pending[executor.submit(process_job, jobs[next_job])] = next_job
+                next_job += 1
+
+    for batch_questions, batch_warnings in results:
+        warnings.extend(batch_warnings)
+        for question in batch_questions:
             key = re.sub(r"\s+", "", question["text"])
             if key in seen:
                 continue
@@ -434,6 +489,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def stream_event(self, value: dict) -> None:
+        self.wfile.write(json.dumps(value, ensure_ascii=False).encode("utf-8") + b"\n")
+        self.wfile.flush()
+
+    def stream_preview(self, filename: str, data: bytes) -> None:
+        chunks, summary, image_pages = extract_file(filename, data)
+        config = read_config()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            questions, warnings = parse_with_ai(
+                filename, chunks, config, image_pages,
+                progress=lambda completed, total: self.stream_event({"type": "progress", "completed": completed, "total": total}),
+            )
+            self.stream_event({"type": "result", "questions": questions, "warnings": warnings, "summary": summary, "chunks": len(chunks), "filename": filename})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except UserError as exc:
+            try:
+                self.stream_event({"type": "error", "error": str(exc)})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        except Exception as exc:
+            print(f"Unexpected preview error: {exc!r}", file=sys.stderr)
+            try:
+                self.stream_event({"type": "error", "error": "处理失败，请查看本机服务日志。"})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
     def read_body(self, limit: int = 1_000_000) -> bytes:
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -500,6 +589,9 @@ class Handler(BaseHTTPRequestHandler):
                 chunks, summary, image_pages = extract_file(filename, data)
                 questions, warnings = parse_with_ai(filename, chunks, read_config(), image_pages)
                 return self.respond(200, {"questions": questions, "warnings": warnings, "summary": summary, "chunks": len(chunks), "filename": filename})
+            if path == "/api/preview-stream":
+                filename = Path(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("filename", [""])[0]).name
+                return self.stream_preview(filename, self.read_body(MAX_UPLOAD))
             if path == "/api/banks":
                 bank = save_bank(self.read_json())
                 return self.respond(201, {"bank": bank})
