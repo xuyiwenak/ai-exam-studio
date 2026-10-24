@@ -1,5 +1,7 @@
 # AI 考点 · AI Exam Studio
 
+[![Cross-platform tests](https://github.com/xuyiwenak/ai-exam-studio/actions/workflows/compatibility.yml/badge.svg)](https://github.com/xuyiwenak/ai-exam-studio/actions/workflows/compatibility.yml)
+
 一个在自己电脑上运行的模拟考试系统。用 AI 从 Excel、Word、PDF 中整理题目，人工核对后加入题库，再进行限时练习和逐题复盘。
 
 **无需注册账号或部署数据库。**公开仓库内置 5 道演示题；个人题库和 API Key 不随代码公开。已有题库可以离线练习，首次安装依赖和调用远程 AI 时需要联网。
@@ -24,6 +26,8 @@
 | Linux（常见 glibc 发行版） | 终端中手动运行 Python 服务 | 提供运行命令，尚未在 Linux 实机验证 |
 
 需要 **Python 3.11 或更新版本**和现代浏览器。Chrome 已实测；近期版本的 Edge、Firefox、Safari 可尝试使用，但尚未逐一验证。普通使用不需要 Node.js、npm 或 Docker。
+
+仓库的 [GitHub Actions 自动测试](https://github.com/xuyiwenak/ai-exam-studio/actions/workflows/compatibility.yml)在 macOS、Windows 和 Ubuntu 上分别安装 Python 3.11、3.13 及项目依赖，运行服务端和页面逻辑测试。每次推送及拉取请求都会执行，也可在 Actions 页面手动运行。自动测试验证安装与代码行为；浏览器实际操作和特定电脑上的启动体验仍以实机测试为准。
 
 依赖中的 [PyMuPDF](https://pymupdf.readthedocs.io/en/latest/installation.html) 为常见的 Windows、macOS 和 Linux 架构提供安装包；较旧的 Linux 系统及 Alpine/musl 环境可能无法直接安装。遇到依赖安装失败时，先确认 Python 版本并更新 `pip`。
 
