@@ -105,15 +105,9 @@ Windows 和 Linux 的手动启动方式需要保持终端打开；按 `Ctrl+C` �
 | AI 配置与 API Key | `.local/ai-config.json`；请保护此文件和项目目录的访问权限 |
 | 未交卷试卷、最近 30 次考试记录 | 当前浏览器的本地存储 |
 | 公开演示题 | `questions.js` |
-
-`.local/` 与 `source/` 已被 Git 忽略。更换电脑时，可备份 `.local/banks/` 中的题库文件；API Key 建议在新电脑重新配置。浏览器考试记录不会随题库文件一起迁移。
-
-本机旧版若保留 `source/VibeCoding.xlsx` 和 `source/OPC题库.xlsx`，可运行 `build_question_data.py` 生成私有的 `.local/questions.js`。macOS/Linux 使用 `.venv/bin/python build_question_data.py`；Windows 使用 `.\.venv\Scripts\python.exe build_question_data.py`。服务会优先读取该私有文件，公开仓库仍只提供演示题。
-
 ## 常见问题
 
 - **网页打不开**：确认本地服务正在运行，并检查终端输出；macOS 后台运行时可查看 `.local/server.log`。
-- **只有演示题，没有 VibeCoding 或 OPC**：公开仓库不包含个人原始题库。可通过网页导入文件，或按上一节在本机生成私有题库。
 - **AI 提示无效 JSON、空内容或输出截断**：重试并检查模型是否支持 JSON 输出；内容较大时拆成更小的文件。导入前始终核对答案。
 - **扫描版 PDF 不能识别**：确认所配置的模型支持图片输入；文字连接测试成功不代表图片能力可用。
 - **换浏览器后考试记录不见了**：记录保存在原浏览器，题库文件仍保存在 `.local/banks/`。
