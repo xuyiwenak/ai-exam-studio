@@ -8,7 +8,7 @@
   const LETTERS = 'ABCDEFGHIJ';
   let saved = readStorage();
   let screen = 'home';
-  let setup = {bank: 'vibe', count: 50, duration: 60, passLine: 60};
+  let setup = {bank: 'vibe', count: 50, duration: 60, passLine: 60, shuffleOptions: true};
   let reviewFilter = 'all';
   let reviewPage = 0;
   let activeResult = null;
@@ -71,10 +71,16 @@
   function answered(q, value) {
     return q.type === 'essay' ? Boolean((value || '').trim()) : Array.isArray(value) && value.length > 0;
   }
-  function answerText(q, value) {
+  function optionOrder(q, paper) {
+    const original = q.options.map((_, index) => index);
+    const stored = paper?.optionOrder?.[q.id];
+    return Array.isArray(stored) && stored.length === original.length && new Set(stored).size === original.length && stored.every(index => original.includes(index)) ? stored : original;
+  }
+  function answerText(q, value, paper) {
     if (q.type === 'essay') return value?.trim() || '未作答';
     if (!answered(q, value)) return '未作答';
-    return value.map(index => `${LETTERS[index]}. ${q.options[index]}`).join('；');
+    const order = optionOrder(q, paper);
+    return [...value].sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(index => `${LETTERS[order.indexOf(index)]}. ${q.options[index]}`).join('；');
   }
   function invalidText(q) {
     return q.id === 'opc-96' ? '原题库标注 A/B/C/D，但缺少 D 选项。' : '本题缺少可用答案或选项。';
@@ -168,6 +174,7 @@
     APP.innerHTML = `<div class="setup-layout"><section class="panel setup-main"><button class="back-link" type="button" data-action="home">← 返回题库</button><div class="eyebrow">SET UP YOUR EXAM</div><h1>${esc(bank.title)}</h1><div class="muted">按自己的节奏组一张模拟试卷。随机抽题，交卷后查看正确率和每道题的答案。</div><hr class="rule">
       <div class="field-group"><div class="field-title">题目数量 <span>随机抽取，不重复</span></div><div class="segmented">${countChoices.map(v => `<button type="button" class="chip ${setup.count === v ? 'active' : ''}" data-action="count" data-value="${v}">${v === 'all' ? `全部 ${bank.questions.length} 题` : `${v} 题`}</button>`).join('')}</div></div>
       <div class="field-group"><div class="field-title">考试时长 <span>时间结束自动交卷</span></div><div class="segmented">${[30, 60, 90, 0].map(v => `<button type="button" class="chip ${setup.duration === v ? 'active' : ''}" data-action="duration" data-value="${v}">${v ? `${v} 分钟` : '不限时'}</button>`).join('')}</div></div>
+      <div class="field-group"><label class="toggle-line" for="shuffleOptions"><input id="shuffleOptions" type="checkbox" ${setup.shuffleOptions ? 'checked' : ''}>打乱单选和多选题的选项顺序</label><div class="hint">每次开考重新排列，判分仍以原题库的正确答案为准。判断题保持原顺序。</div></div>
       <div class="field-group"><div class="field-title">自设及格线 <span>按客观题正确率计算</span></div><div class="input-line"><input id="passLine" type="number" min="1" max="100" value="${setup.passLine}" aria-label="及格线百分比"><span class="muted">%</span></div></div>
       ${counts.essay ? `<div class="notice">选择“全部”会包含 ${counts.essay} 道简答题。原表未提供简答题标准答案，页面会保存作答内容，但不自动判分。</div>` : ''}${invalidCount ? `<div class="notice">原题库有 ${invalidCount} 道题缺少答案所需的选项。随机模拟会避开；“全部”模式会展示，但不计分。</div>` : ''}
       <div class="start-row"><button class="primary" type="button" data-action="start">开始模拟考试 →</button><small>题目与答案来自所选题库；规则仅用于自测。</small></div></section>
@@ -180,12 +187,13 @@
     const questions = paperQuestions(session);
     const q = questions[session.current];
     const value = session.answers[q.id];
+    const displayOrder = optionOrder(q, session);
     const answerable = questions.filter(item => !item.invalid);
     const done = answerable.filter(item => answered(item, session.answers[item.id])).length;
     const marked = Object.values(session.marks).filter(Boolean).length;
     const options = q.type === 'essay'
       ? `<textarea id="essayAnswer" class="essay-input" placeholder="在这里写下你的答案……">${esc(value || '')}</textarea><div class="hint">此题无标准答案，交卷后请自行回顾。</div>`
-      : `<div class="option-list">${q.options.map((option, index) => `<button type="button" class="option ${Array.isArray(value) && value.includes(index) ? 'selected' : ''}" data-action="answer" data-value="${index}" aria-pressed="${Array.isArray(value) && value.includes(index)}" ${q.invalid ? 'disabled' : ''}><span class="option-letter">${LETTERS[index]}</span><span>${esc(option)}</span></button>`).join('')}</div>${q.invalid ? `<div class="notice">${invalidText(q)}本题不参与计分。</div>` : q.type === 'multiple' ? '<div class="hint">多选题需选全且无多选才算正确。</div>' : ''}`;
+      : `<div class="option-list">${displayOrder.map((originalIndex, displayIndex) => `<button type="button" class="option ${Array.isArray(value) && value.includes(originalIndex) ? 'selected' : ''}" data-action="answer" data-value="${originalIndex}" aria-pressed="${Array.isArray(value) && value.includes(originalIndex)}" ${q.invalid ? 'disabled' : ''}><span class="option-letter">${LETTERS[displayIndex]}</span><span>${esc(q.options[originalIndex])}</span></button>`).join('')}</div>${q.invalid ? `<div class="notice">${invalidText(q)}本题不参与计分。</div>` : q.type === 'multiple' ? '<div class="hint">多选题需选全且无多选才算正确。</div>' : ''}`;
     APP.innerHTML = `<div class="exam-head"><div class="exam-title-row"><span class="mini-icon">${session.bank === 'vibe' ? 'VC' : session.bank === 'opc' ? 'OPC' : '题'}</span><div><strong>${esc(BANKS[session.bank].title)}</strong><span>模拟考试 · ${questions.length} 题</span></div></div><div class="exam-head-right"><span class="timer" id="timer">${formatTime(remaining(session))}</span><button class="secondary" type="button" data-action="submit">交卷</button></div></div>
       <div class="exam-body"><section class="panel question-panel"><div class="question-meta"><span class="type">${TYPE_LABELS[q.type]}</span><span>第 ${session.current + 1} / ${questions.length} 题</span></div><h1 class="question-title">${esc(q.text)}</h1>${options}<div class="question-bottom"><div class="left-actions"><button class="secondary" type="button" data-action="mark">${session.marks[q.id] ? '★ 已标记' : '☆ 标记此题'}</button>${answered(q, value) ? '<button class="secondary" type="button" data-action="clear">清空答案</button>' : ''}</div><div class="right-actions"><button class="secondary" type="button" data-action="prev" ${session.current === 0 ? 'disabled' : ''}>上一题</button><button class="primary" type="button" data-action="next">${session.current === questions.length - 1 ? '完成并检查' : '下一题 →'}</button></div></div></section>
       <aside class="panel palette-panel"><div class="palette-head"><h3>答题卡</h3><span>${done} / ${answerable.length} 可答题已答</span></div><div class="progress-track"><div class="progress-fill" style="width:${answerable.length ? done / answerable.length * 100 : 100}%"></div></div><div class="legend"><span><i class="dot done"></i>已作答</span><span><i class="dot"></i>未作答</span><span><i class="dot marked"></i>已标记</span></div><div class="palette-grid">${questions.map((item, index) => `<button class="qnum ${item.invalid ? 'invalid' : answered(item, session.answers[item.id]) ? 'answered' : ''} ${session.marks[item.id] ? 'marked' : ''} ${index === session.current ? 'current' : ''}" type="button" data-action="jump" data-value="${index}" aria-label="跳转到第${index + 1}题${item.invalid ? '，题库缺项' : ''}">${item.invalid ? '!' : index + 1}</button>`).join('')}</div><div class="palette-foot"><div><strong>${done}</strong><span>已作答</span></div><div><strong>${answerable.length - done}</strong><span>未作答</span></div><div><strong>${marked}</strong><span>已标记</span></div></div></aside></div>`;
@@ -242,7 +250,7 @@
         const isDone = answered(q, result.answers[q.id]);
         const status = q.invalid ? '题库缺项' : q.type === 'essay' ? '待自评' : !isDone ? '未作答' : correct(q, result.answers[q.id]) ? '正确' : '错误';
         const statusClass = status === '正确' ? 'correct' : status === '错误' ? 'wrong' : '';
-        return `<details class="review-item"><summary class="review-summary"><span class="review-index">${String(index).padStart(2, '0')}</span><span class="review-text">${esc(q.text)}</span><span class="status ${statusClass}">${status}</span></summary><div class="review-detail"><div><strong>你的答案：</strong>${esc(answerText(q, result.answers[q.id]))}</div><div><strong>${q.type === 'essay' ? '参考答案：' : '正确答案：'}</strong>${q.invalid ? invalidText(q) : q.type === 'essay' ? '原题库未提供，请自行复盘' : esc(answerText(q, q.answer))}</div>${q.explanation ? `<div><strong>解析：</strong>${esc(q.explanation)}</div>` : ''}</div></details>`;
+        return `<details class="review-item"><summary class="review-summary"><span class="review-index">${String(index).padStart(2, '0')}</span><span class="review-text">${esc(q.text)}</span><span class="status ${statusClass}">${status}</span></summary><div class="review-detail"><div><strong>你的答案：</strong>${esc(answerText(q, result.answers[q.id], result))}</div><div><strong>${q.type === 'essay' ? '参考答案：' : '正确答案：'}</strong>${q.invalid ? invalidText(q) : q.type === 'essay' ? '原题库未提供，请自行复盘' : esc(answerText(q, q.answer, result))}</div>${q.explanation ? `<div><strong>解析：</strong>${esc(q.explanation)}</div>` : ''}</div></details>`;
       }).join('') : '<div class="empty">这里暂时没有题目</div>'}</div>${pageCount > 1 ? `<div class="review-pagination"><button class="secondary" type="button" data-action="review-page" data-value="${reviewPage - 1}" ${reviewPage === 0 ? 'disabled' : ''}>上一页</button><span>${reviewPage + 1} / ${pageCount} 页 · 共 ${filtered.length} 题</span><button class="secondary" type="button" data-action="review-page" data-value="${reviewPage + 1}" ${reviewPage === pageCount - 1 ? 'disabled' : ''}>下一页</button></div>` : ''}</section><div class="result-actions"><button class="primary" type="button" data-action="retry">再考一次</button><button class="secondary" type="button" data-action="home">返回题库</button></div>`;
   }
 
@@ -272,8 +280,16 @@
     if (saved.session && !confirm('已有一份未交卷的试卷。开始新考试将覆盖它，确定继续吗？')) return;
     const pool = bankQuestions(setup.bank);
     const chosen = setup.count === 'all' ? [...pool] : shuffle(pool.filter(q => q.type !== 'essay' && !q.invalid)).slice(0, setup.count);
+    const optionOrderByQuestion = {};
+    if (setup.shuffleOptions) {
+      for (const question of chosen) {
+        if ((question.type === 'single' || question.type === 'multiple') && !question.invalid) {
+          optionOrderByQuestion[question.id] = shuffle(question.options.map((_, index) => index));
+        }
+      }
+    }
     const now = Date.now();
-    saved.session = {bank: setup.bank, ids: chosen.map(q => q.id), answers: {}, marks: {}, current: 0, duration: setup.duration, passLine: setup.passLine, startedAt: now, deadline: setup.duration ? now + setup.duration * 60000 : null};
+    saved.session = {bank: setup.bank, ids: chosen.map(q => q.id), answers: {}, optionOrder: optionOrderByQuestion, marks: {}, current: 0, duration: setup.duration, passLine: setup.passLine, startedAt: now, deadline: setup.duration ? now + setup.duration * 60000 : null};
     persist();
     screen = 'exam'; render(); window.scrollTo(0, 0);
   }
@@ -415,6 +431,7 @@
     if (event.target.id === 'passLine') setup.passLine = Number(event.target.value);
   });
   APP.addEventListener('change', event => {
+    if (event.target.id === 'shuffleOptions') setup.shuffleOptions = event.target.checked;
     if (event.target.id === 'importFile') {
       importState.file = event.target.files?.[0] || null;
       importState.questions = []; importState.error = ''; importState.source = '';
