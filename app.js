@@ -17,6 +17,7 @@
   let aiConfig = {base_url: 'https://api.openai.com/v1', model: '', has_key: false, masked_key: ''};
   let importState = {file: null, title: '', questions: [], warnings: [], summary: null, source: '', busy: false, progress: null, error: '', page: 0, editingIndex: null, editingDraft: null};
   let fileDragDepth = 0;
+  let deleteState = null;
 
   async function requestJSON(path, options = {}) {
     const response = await fetch(path, options);
@@ -39,7 +40,7 @@
     } catch (_) { backendAvailable = false; }
     render();
   }
-  function showScreen(next) { screen = next; render(); window.scrollTo(0, 0); }
+  function showScreen(next) { if (next !== 'library') deleteState = null; screen = next; render(); window.scrollTo(0, 0); }
 
   function readStorage() {
     try {
@@ -106,7 +107,7 @@
     }
     return items;
   }
-  function goHome() { screen = 'home'; render(); window.scrollTo(0, 0); }
+  function goHome() { deleteState = null; screen = 'home'; render(); window.scrollTo(0, 0); }
 
   function renderHome() {
     const resume = saved.session && BANKS[saved.session.bank] ? saved.session : null;
@@ -128,10 +129,19 @@
 
   function renderLibrary() {
     const entries = Object.entries(BANKS);
-    APP.innerHTML = `<section class="page-intro"><div><div class="eyebrow">QUESTION BANKS</div><h1>题库管理</h1><p>现有题库和新导入的题库都在这里。选择一套题库，即可开始模拟考试。</p></div><button class="primary" type="button" data-action="nav-import">＋ 导入题库</button></section><section class="library-list">${entries.map(([id, bank]) => {
+    const pendingBank = deleteState && BANKS[deleteState.id];
+    APP.innerHTML = `<section class="page-intro"><div><div class="eyebrow">QUESTION BANKS</div><h1>题库管理</h1><p>选择一套题库开始模拟考试；导入的题库可在这里删除。</p></div><button class="primary" type="button" data-action="nav-import">＋ 导入题库</button></section><section class="library-list">${entries.map(([id, bank]) => {
       const counts = countByType(bank.questions);
-      return `<div class="panel library-row"><div class="library-row-main"><span class="bank-icon">${id === 'vibe' ? 'VC' : id === 'opc' ? 'OPC' : '题'}</span><div><h3>${esc(bank.title)}</h3><p>${esc(bank.source || '本地题库')} · 单选 ${counts.single || 0} · 多选 ${counts.multiple || 0} · 判断 ${counts.boolean || 0}${counts.essay ? ` · 简答 ${counts.essay}` : ''}</p></div></div><div class="library-row-actions"><span class="library-count">${bank.questions.length} 题</span><button class="secondary" type="button" data-action="setup" data-bank="${esc(id)}">开始练习 →</button></div></div>`;
-    }).join('')}</section><div class="action-card"><div><strong>有新的题库文件？</strong><p>支持 Excel、Word、PDF，由你配置的大模型分析题目与答案，核对后加入题库。</p></div><button class="primary" type="button" data-action="nav-import">前往导入</button></div>`;
+      return `<div class="panel library-row"><div class="library-row-main"><span class="bank-icon">${id === 'vibe' ? 'VC' : id === 'opc' ? 'OPC' : '题'}</span><div><h3>${esc(bank.title)}</h3><p>${esc(bank.source || '本地题库')} · 单选 ${counts.single || 0} · 多选 ${counts.multiple || 0} · 判断 ${counts.boolean || 0}${counts.essay ? ` · 简答 ${counts.essay}` : ''}</p></div></div><div class="library-row-actions"><span class="library-count">${bank.questions.length} 题</span><button class="secondary" type="button" data-action="setup" data-bank="${esc(id)}">开始练习 →</button>${id.startsWith('import-') ? `<button class="trash-button" type="button" data-action="delete-bank-prompt" data-bank="${esc(id)}" aria-label="删除题库：${esc(bank.title)}" title="删除题库：${esc(bank.title)}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v7m4-7v7"/></svg></button>` : ''}</div></div>`;
+    }).join('')}</section><div class="action-card"><div><strong>有新的题库文件？</strong><p>支持 Excel、Word、PDF，由你配置的大模型分析题目与答案，核对后加入题库。</p></div><button class="primary" type="button" data-action="nav-import">前往导入</button></div>${pendingBank ? `<dialog class="delete-dialog" id="deleteBankDialog" aria-labelledby="deleteBankTitle"><div class="delete-dialog-icon" aria-hidden="true">!</div><h2 id="deleteBankTitle">确认删除“${esc(pendingBank.title)}”？</h2><p>这会删除本机题库，以及当前浏览器中该题库的未交卷试卷和考试记录。删除后无法撤销；原始文件不受影响。</p>${deleteState.error ? `<div class="inline-note danger-note">${esc(deleteState.error)}</div>` : ''}<div class="delete-dialog-actions"><button class="secondary" type="button" data-action="delete-bank-cancel" ${deleteState.busy ? 'disabled' : ''}>取消</button><button class="danger-button" type="button" data-action="delete-bank-confirm" ${deleteState.busy ? 'disabled' : ''}>${deleteState.busy ? '正在删除…' : '确认删除'}</button></div></dialog>` : ''}`;
+    if (pendingBank) {
+      const dialog = document.getElementById('deleteBankDialog');
+      dialog.addEventListener('cancel', event => {
+        if (deleteState?.busy) event.preventDefault();
+        else deleteState = null;
+      });
+      dialog.showModal();
+    }
   }
 
   function renderSettings() {
@@ -397,6 +407,30 @@
       showScreen('library'); toast(`已导入 ${data.bank.questions.length} 道题`);
     } catch (error) { importState.error = error.message; importState.busy = false; renderImport(); }
   }
+  async function deleteImportedBank() {
+    const id = deleteState?.id;
+    if (!id || deleteState.busy) return;
+    deleteState.busy = true;
+    deleteState.error = '';
+    renderLibrary();
+    try {
+      await requestJSON(`/api/banks/${encodeURIComponent(id)}`, {method: 'DELETE'});
+      delete BANKS[id];
+      if (saved.session?.bank === id) saved.session = null;
+      saved.history = saved.history.filter(result => result.bank !== id);
+      if (activeResult?.bank === id) activeResult = null;
+      persist();
+      deleteState = null;
+      if (screen === 'library') renderLibrary();
+      toast('题库已删除');
+    } catch (error) {
+      if (deleteState?.id === id) {
+        deleteState.busy = false;
+        deleteState.error = error.message;
+        renderLibrary();
+      }
+    }
+  }
   function saveEditedQuestion() {
     const draft = importState.editingDraft;
     if (!draft || !draft.text.trim()) return toast('题干不能为空');
@@ -429,6 +463,13 @@
     if (action === 'clear-config') return clearAIConfig();
     if (action === 'analyze-file') return analyzeFile();
     if (action === 'save-bank') return saveImportedBank();
+    if (action === 'delete-bank-prompt') {
+      const id = button.dataset.bank;
+      if (id?.startsWith('import-') && BANKS[id]) { deleteState = {id, busy: false, error: ''}; renderLibrary(); }
+      return;
+    }
+    if (action === 'delete-bank-cancel') { deleteState = null; return renderLibrary(); }
+    if (action === 'delete-bank-confirm') return deleteImportedBank();
     if (action === 'import-page') { importState.page = Number(value); renderImport(); document.querySelector('.preview-head')?.scrollIntoView({block: 'start'}); return; }
     if (action === 'edit-question') { importState.editingIndex = Number(value); importState.editingDraft = structuredClone(importState.questions[importState.editingIndex]); renderImport(); document.querySelector('.editor')?.scrollIntoView({block: 'start'}); return; }
     if (action === 'cancel-edit') { importState.editingIndex = null; importState.editingDraft = null; return renderImport(); }

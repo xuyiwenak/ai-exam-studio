@@ -476,6 +476,15 @@ def save_bank(payload: dict) -> dict:
     return bank
 
 
+def delete_bank(bank_id: str) -> None:
+    if not re.fullmatch(r"import-[0-9a-f]{12}", bank_id):
+        raise UserError("只能删除通过网页导入的题库。")
+    try:
+        (BANK_DIR / f"{bank_id}.json").unlink()
+    except FileNotFoundError as exc:
+        raise UserError("题库不存在或已经删除。") from exc
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ExamStudio/2.0"
 
@@ -598,6 +607,21 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/banks":
                 bank = save_bank(self.read_json())
                 return self.respond(201, {"bank": bank})
+            return self.respond(404, {"error": "接口不存在。"})
+        except UserError as exc:
+            self.respond(400, {"error": str(exc)})
+        except Exception as exc:
+            print(f"Unexpected error: {exc!r}", file=sys.stderr)
+            self.respond(500, {"error": "处理失败，请查看本机服务日志。"})
+
+    def do_DELETE(self) -> None:
+        path = urllib.parse.urlparse(self.path).path
+        try:
+            self.check_origin()
+            if path.startswith("/api/banks/"):
+                bank_id = urllib.parse.unquote(path.removeprefix("/api/banks/"))
+                delete_bank(bank_id)
+                return self.respond(200, {"deleted": bank_id})
             return self.respond(404, {"error": "接口不存在。"})
         except UserError as exc:
             self.respond(400, {"error": str(exc)})

@@ -34,4 +34,6 @@ API Key 保存在 `.local/ai-config.json`，文件权限仅允许当前用户读
 
 公开仓库只包含代码和演示题，不包含个人题库、原始文档或 API Key。`.local/` 和 `source/` 已被 Git 忽略。
 
+在 **题库管理** 中，导入的题库可通过红色垃圾桶删除，确认后会同时清除当前浏览器里与该题库相关的未交卷试卷和考试记录。内置题库与原始文件不会被删除。
+
 若在本机保留了旧版的 `source/VibeCoding.xlsx` 与 `source/OPC题库.xlsx`，可运行 `.venv/bin/python build_question_data.py`，生成私有的 `.local/questions.js`。服务会优先读取此文件，让原有两套题库继续可用；公开的 `questions.js` 则提供演示数据。其他题库可直接通过网页导入。
