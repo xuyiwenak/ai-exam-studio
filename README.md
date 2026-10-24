@@ -20,10 +20,10 @@
 
 | 环境 | 运行方式 | 验证情况 |
 | --- | --- | --- |
-| macOS（Apple Silicon） | `start.command` 后台启动，或按下文手动运行 | 本机已验证 macOS 26.6.2、Python 3.13.7、Chrome；GitHub macOS ARM 测试通过 |
-| macOS（Intel） | 与 Apple Silicon 相同 | 有依赖安装包，尚未在 Intel Mac 实机验证 |
-| Windows 10/11 | PowerShell 中手动运行 Python 服务 | GitHub Windows 托管环境自动测试通过；10/11 实机尚未验证 |
-| Linux（常见 glibc 发行版） | 终端中手动运行 Python 服务 | GitHub Ubuntu 托管环境自动测试通过；其他发行版尚未验证 |
+| macOS（Apple Silicon） | `start.command` 后台启动，或按下文手动运行 
+| macOS（Intel） | 与 Apple Silicon 相同 
+| Windows 10/11 | PowerShell 中手动运行 Python 服务 
+| Linux（常见 glibc 发行版） | 终端中手动运行 Python 服务 
 
 需要 **Python 3.11 或更新版本**和现代浏览器。Chrome 已实测；近期版本的 Edge、Firefox、Safari 可尝试使用，但尚未逐一验证。普通使用不需要 Node.js、npm 或 Docker。
 
