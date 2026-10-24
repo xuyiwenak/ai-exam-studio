@@ -16,6 +16,7 @@
   let backendAvailable = false;
   let aiConfig = {base_url: 'https://api.openai.com/v1', model: '', has_key: false, masked_key: ''};
   let importState = {file: null, title: '', questions: [], warnings: [], summary: null, source: '', busy: false, error: '', page: 0, editingIndex: null, editingDraft: null};
+  let fileDragDepth = 0;
 
   async function requestJSON(path, options = {}) {
     const response = await fetch(path, options);
@@ -156,7 +157,7 @@
     const visible = state.questions.slice(state.page * 15, (state.page + 1) * 15);
     const invalid = state.questions.filter(q => q.invalid).length;
     APP.innerHTML = `<section class="page-intro"><div><div class="eyebrow">IMPORT QUESTION BANK</div><h1>导入题库</h1><p>上传文件 → AI 识别题目 → 人工核对 → 保存为可考试的题库。</p></div><button class="secondary" type="button" data-action="nav-library">返回题库</button></section><div class="wide-layout"><section class="panel content-panel"><h2>选择题库文件</h2><p>支持 .xlsx、.docx 和 .pdf（含扫描版）。可提取文字或扫描页图片会发送给配置的模型。</p>${!backendAvailable ? '<div class="inline-note danger-note">导入服务未运行。请双击 start.command 启动本地服务。</div>' : ''}${!aiConfig.has_key ? '<div class="inline-note warning-note">尚未配置 API Key。请先到 AI 配置页面填写接口信息；扫描版 PDF 还需要支持图片输入的模型。</div>' : ''}
-      <label class="file-picker" for="importFile"><input id="importFile" type="file" accept=".xlsx,.docx,.pdf" ${state.busy ? 'disabled' : ''}><span class="file-picker-icon">↑</span><strong>${state.file ? esc(state.file.name) : '点击选择 Excel、Word 或 PDF 文件'}</strong><span>${state.file ? `${(state.file.size / 1024).toFixed(1)} KB · 点击可重新选择` : '单个文件不超过 20 MB'}</span></label>
+      <label class="file-picker ${state.busy ? 'is-disabled' : ''}" for="importFile"><input id="importFile" type="file" accept=".xlsx,.docx,.pdf" ${state.busy ? 'disabled' : ''}><span class="file-picker-icon">↑</span><strong>${state.file ? esc(state.file.name) : '拖入文件，或点击选择 Excel、Word、PDF'}</strong><span>${state.file ? `${(state.file.size / 1024).toFixed(1)} KB · 拖入或点击可重新选择` : '单个文件不超过 20 MB'}</span></label>
       <div class="toolbar-row"><button class="primary" type="button" data-action="analyze-file" ${!state.file || state.busy || !backendAvailable || !aiConfig.has_key ? 'disabled' : ''}>${state.busy ? '正在分析…' : '用 AI 分析题目'}</button>${state.busy ? '<span class="busy"><i class="spinner"></i>正在解析文件并调用模型，题量多时可能需要几分钟</span>' : ''}</div>${state.error ? `<div class="inline-note danger-note">${esc(state.error)}</div>` : ''}
       ${state.questions.length ? `<hr class="rule"><div class="preview-head"><div><strong>识别结果 · ${state.questions.length} 道题</strong><p>${invalid ? `${invalid} 道需要核对答案或选项。` : '全部题目均有可用答案或为简答题。'}请核对模型识别结果后再保存。${state.summary?.vision_pages ? `其中 ${state.summary.vision_pages} 页由多模态模型读取图片。` : ''}</p></div><span class="source-badge">${esc(state.source)}</span></div>${state.warnings.map(warning => `<div class="inline-note warning-note">${esc(warning)}</div>`).join('')}<div class="form-field"><label for="importTitle">题库名称</label><input id="importTitle" type="text" value="${esc(state.title)}" maxlength="100"></div>${state.editingDraft ? renderEditor() : ''}<div class="preview-list">${visible.map((q, localIndex) => {
         const index = state.page * 15 + localIndex;
@@ -334,6 +335,20 @@
     } catch (error) { importState.error = error.message; }
     finally { importState.busy = false; renderImport(); }
   }
+  function selectImportFile(files) {
+    if (importState.busy || !files?.length) return;
+    const file = files[0];
+    const error = files.length > 1 ? '一次只能导入一个文件。' : !/\.(xlsx|docx|pdf)$/i.test(file.name) ? '仅支持 .xlsx、.docx 和 .pdf 文件。' : file.size > 20 * 1024 * 1024 ? '文件不能超过 20 MB。' : file.size === 0 ? '文件为空，请选择其他文件。' : '';
+    importState.file = error ? null : file;
+    importState.questions = []; importState.warnings = []; importState.summary = null;
+    importState.source = ''; importState.title = ''; importState.error = error;
+    importState.page = 0; importState.editingIndex = null; importState.editingDraft = null;
+    renderImport();
+  }
+  function fileDropZone(event) {
+    const zone = event.target.closest?.('.file-picker');
+    return zone && APP.contains(zone) ? zone : null;
+  }
   async function saveImportedBank() {
     if (importState.busy || !importState.questions.length) return;
     if (importState.editingDraft) return toast('请先保存正在编辑的题目');
@@ -432,11 +447,7 @@
   });
   APP.addEventListener('change', event => {
     if (event.target.id === 'shuffleOptions') setup.shuffleOptions = event.target.checked;
-    if (event.target.id === 'importFile') {
-      importState.file = event.target.files?.[0] || null;
-      importState.questions = []; importState.error = ''; importState.source = '';
-      renderImport();
-    }
+    if (event.target.id === 'importFile') selectImportFile(event.target.files);
     if (event.target.id === 'editType' && importState.editingDraft) {
       const draft = importState.editingDraft;
       draft.type = event.target.value;
@@ -445,6 +456,34 @@
       else if (draft.options.length < 2) { draft.options = ['', '', '', '']; draft.answer = []; }
       renderImport();
     }
+  });
+  APP.addEventListener('dragenter', event => {
+    const zone = fileDropZone(event);
+    if (!zone || !Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+    event.preventDefault();
+    if (importState.busy) return;
+    fileDragDepth++;
+    zone.classList.add('drag-active');
+  });
+  APP.addEventListener('dragover', event => {
+    const zone = fileDropZone(event);
+    if (!zone || !Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = importState.busy ? 'none' : 'copy';
+  });
+  APP.addEventListener('dragleave', event => {
+    const zone = fileDropZone(event);
+    if (!zone || !fileDragDepth) return;
+    fileDragDepth = Math.max(0, fileDragDepth - 1);
+    if (!fileDragDepth) zone.classList.remove('drag-active');
+  });
+  APP.addEventListener('drop', event => {
+    const zone = fileDropZone(event);
+    if (!zone) return;
+    event.preventDefault();
+    fileDragDepth = 0;
+    zone.classList.remove('drag-active');
+    selectImportFile(event.dataTransfer?.files);
   });
   document.getElementById('brandButton').addEventListener('click', goHome);
   document.querySelector('.main-nav').addEventListener('click', event => {
